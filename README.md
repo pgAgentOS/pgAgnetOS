@@ -3,7 +3,7 @@
 <div align="center">
 
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14+-blue?logo=postgresql)
-![License](https://img.shields.io/badge/license-MIT-green)
+![License](https://img.shields.io/badge/license-GPL3-green)
 ![Version](https://img.shields.io/badge/version-1.0.0-orange)
 
 **AI Agent Operating System & Framework built natively in PostgreSQL**
@@ -447,7 +447,7 @@ Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md)
 
 ## 📄 License
 
-MIT License - see [LICENSE](LICENSE) for details.
+GPL 3 License - see [LICENSE](LICENSE) for details.
 
 ---
 
