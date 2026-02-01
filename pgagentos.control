@@ -1,0 +1,6 @@
+# pgagentos extension
+comment = 'pgAgentOS: PostgreSQL Agent Operating System'
+default_version = '1.0'
+module_pathname = '$libdir/pgagentos'
+relocatable = false
+requires = 'pgvector'
