@@ -156,9 +156,9 @@ SELECT
     count(*) as total_executions,
     count(*) FILTER (WHERE se.status = 'success') as successful,
     count(*) FILTER (WHERE se.status = 'failure') as failed,
-    round(100.0 * count(*) FILTER (WHERE se.status = 'success') / NULLIF(count(*), 0), 2) as success_rate,
-    round(avg(se.duration_ms), 2) as avg_duration_ms,
-    round(percentile_cont(0.95) WITHIN GROUP (ORDER BY se.duration_ms), 2) as p95_duration_ms,
+    round((100.0 * count(*) FILTER (WHERE se.status = 'success') / NULLIF(count(*), 0))::numeric, 2) as success_rate,
+    round(avg(se.duration_ms)::numeric, 2) as avg_duration_ms,
+    round(percentile_cont(0.95) WITHIN GROUP (ORDER BY se.duration_ms)::numeric, 2) as p95_duration_ms,
     sum(se.tokens_used) as total_tokens,
     sum(se.cost_usd) as total_cost_usd,
     max(se.completed_at) as last_used_at

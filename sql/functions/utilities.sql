@@ -196,9 +196,9 @@ IMMUTABLE
 AS $$
     SELECT CASE
         WHEN p_ms < 1000 THEN p_ms || 'ms'
-        WHEN p_ms < 60000 THEN round(p_ms / 1000.0, 2) || 's'
-        WHEN p_ms < 3600000 THEN round(p_ms / 60000.0, 2) || 'm'
-        ELSE round(p_ms / 3600000.0, 2) || 'h'
+        WHEN p_ms < 60000 THEN round((p_ms / 1000.0)::numeric, 2) || 's'
+        WHEN p_ms < 3600000 THEN round((p_ms / 60000.0)::numeric, 2) || 'm'
+        ELSE round((p_ms / 3600000.0)::numeric, 2) || 'h'
     END;
 $$;
 
