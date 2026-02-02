@@ -3,9 +3,7 @@
 -- Schema: Extensions & Dependencies
 -- ============================================================================
 
--- Required extensions
-CREATE EXTENSION IF NOT EXISTS pgvector;
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
+-- Required extensions are declared in pgagentos.control (vector/pgcrypto).
 
 -- Verify minimum PostgreSQL version
 DO $$

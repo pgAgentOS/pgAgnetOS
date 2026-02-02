@@ -14,6 +14,7 @@ CREATE TABLE aos_skills.skill (
     name text NOT NULL,
     description text,
     category text,                                    -- e.g., 'retrieval', 'generation', 'tool'
+    risk_level text DEFAULT 'low',                   -- e.g., 'low', 'medium', 'high', 'critical'
     input_schema jsonb,                              -- JSON Schema for input validation
     output_schema jsonb,                             -- JSON Schema for output validation
     is_active bool DEFAULT true,

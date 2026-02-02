@@ -73,8 +73,12 @@ BEGIN
         RAISE EXCEPTION '  ✗ Tenant context not set';
     END IF;
     
-    -- Cleanup
-    DELETE FROM aos_auth.tenant WHERE tenant_id = v_tenant_id;
+    -- Cleanup (best-effort; immutability triggers can block deletes)
+    BEGIN
+        DELETE FROM aos_auth.tenant WHERE tenant_id = v_tenant_id;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE '  ⚠️ Cleanup skipped: %', SQLERRM;
+    END;
     
     RAISE NOTICE 'Test 3: PASSED';
 END $$;
@@ -128,8 +132,12 @@ BEGIN
         RAISE EXCEPTION '  ✗ DOT visualization failed';
     END IF;
     
-    -- Cleanup
-    DELETE FROM aos_auth.tenant WHERE tenant_id = v_tenant_id;
+    -- Cleanup (best-effort; immutability triggers can block deletes)
+    BEGIN
+        DELETE FROM aos_auth.tenant WHERE tenant_id = v_tenant_id;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE '  ⚠️ Cleanup skipped: %', SQLERRM;
+    END;
     
     RAISE NOTICE 'Test 4: PASSED';
 END $$;
@@ -207,8 +215,12 @@ BEGIN
         RAISE EXCEPTION '  ✗ State history incomplete';
     END IF;
     
-    -- Cleanup
-    DELETE FROM aos_auth.tenant WHERE tenant_id = v_tenant_id;
+    -- Cleanup (best-effort; immutability triggers can block deletes)
+    BEGIN
+        DELETE FROM aos_auth.tenant WHERE tenant_id = v_tenant_id;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE '  ⚠️ Cleanup skipped: %', SQLERRM;
+    END;
     
     RAISE NOTICE 'Test 5: PASSED';
 END $$;
@@ -240,8 +252,12 @@ BEGIN
         RAISE NOTICE '  ✓ Update correctly blocked: %', SQLERRM;
     END;
     
-    -- Cleanup
-    DELETE FROM aos_auth.tenant WHERE tenant_id = v_tenant_id;
+    -- Cleanup (best-effort; immutability triggers can block deletes)
+    BEGIN
+        DELETE FROM aos_auth.tenant WHERE tenant_id = v_tenant_id;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE '  ⚠️ Cleanup skipped: %', SQLERRM;
+    END;
     
     RAISE NOTICE 'Test 6: PASSED';
 END $$;
@@ -280,10 +296,75 @@ BEGIN
         RAISE EXCEPTION '  ✗ Model defaults lost';
     END IF;
     
-    -- Cleanup
-    DELETE FROM aos_auth.tenant WHERE tenant_id = v_tenant_id;
+    -- Cleanup (best-effort; immutability triggers can block deletes)
+    BEGIN
+        DELETE FROM aos_auth.tenant WHERE tenant_id = v_tenant_id;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE '  ⚠️ Cleanup skipped: %', SQLERRM;
+    END;
     
     RAISE NOTICE 'Test 7: PASSED';
+END $$;
+
+-- Test 8: Embedding enqueue and similarity search
+DO $$
+DECLARE
+    v_tenant_id uuid := gen_random_uuid();
+    v_doc_id uuid;
+    v_enqueued int;
+    v_result_count int;
+BEGIN
+    RAISE NOTICE 'Test 8: Embedding queue + vector search...';
+
+    -- Setup
+    INSERT INTO aos_auth.tenant (tenant_id, name) VALUES (v_tenant_id, 'embed_test_' || v_tenant_id);
+    PERFORM aos_embed.set_embedding_settings(v_tenant_id, true, interval '1 minute', 100, true);
+
+    INSERT INTO aos_kg.doc (doc_id, tenant_id, content, title, source)
+    VALUES (gen_random_uuid(), v_tenant_id, 'Embedding content for vector test', 'Embed Test', 'test')
+    RETURNING doc_id INTO v_doc_id;
+
+    -- Enqueue missing embeddings
+    v_enqueued := aos_embed.enqueue_missing_embeddings(v_tenant_id, 10, false);
+    IF v_enqueued = 1 THEN
+        RAISE NOTICE '  ✓ Enqueued embedding job';
+    ELSE
+        RAISE EXCEPTION '  ✗ Expected 1 job enqueued, got %', v_enqueued;
+    END IF;
+
+    -- Insert a mock embedding vector (all 0.01) to test similarity search
+    INSERT INTO aos_embed.embedding (doc_id, chunk_index, embedding, model_name, chunk_text, chunk_tokens)
+    VALUES (
+        v_doc_id,
+        0,
+        (ARRAY(SELECT 0.01::float8 FROM generate_series(1, 1536)))::vector(1536),
+        'test-embed',
+        'Embedding content for vector test',
+        6
+    );
+
+    SELECT count(*) INTO v_result_count
+    FROM aos_embed.similarity_search(
+        (ARRAY(SELECT 0.01::float8 FROM generate_series(1, 1536)))::vector(1536),
+        v_tenant_id,
+        5,
+        0.9
+    );
+
+    IF v_result_count >= 1 THEN
+        RAISE NOTICE '  ✓ Vector similarity search returned results';
+    ELSE
+        RAISE EXCEPTION '  ✗ Vector similarity search returned no results';
+    END IF;
+
+    -- Cleanup (best-effort; immutability triggers can block deletes)
+    BEGIN
+        DELETE FROM aos_auth.tenant WHERE tenant_id = v_tenant_id;
+    EXCEPTION WHEN OTHERS THEN
+        RAISE NOTICE '  ⚠️ Cleanup skipped: %', SQLERRM;
+    END;
+
+    RAISE NOTICE 'Test 8: PASSED';
 END $$;
 
 -- Summary

@@ -14,8 +14,8 @@
 CREATE OR REPLACE VIEW aos_agent.dashboard_overview AS
 WITH stats AS (
     SELECT 
-        tenant_id,
-        count(DISTINCT agent_id) as total_agents,
+        a.tenant_id,
+        count(DISTINCT a.agent_id) as total_agents,
         count(DISTINCT CASE WHEN c.status = 'active' THEN c.conversation_id END) as active_conversations,
         count(DISTINCT CASE WHEN t.status = 'processing' THEN t.turn_id END) as processing_turns,
         count(DISTINCT CASE WHEN t.status = 'waiting_tool' THEN t.turn_id END) as awaiting_approval,
@@ -25,7 +25,7 @@ WITH stats AS (
     LEFT JOIN aos_agent.conversation c ON c.agent_id = a.agent_id
     LEFT JOIN aos_agent.turn t ON t.conversation_id = c.conversation_id
         AND t.started_at > now() - interval '24 hours'
-    GROUP BY tenant_id
+    GROUP BY a.tenant_id
 )
 SELECT 
     t.tenant_id,
@@ -390,7 +390,7 @@ BEGIN
             ) sub
         ),
         'success_rate', round(
-            100.0 * count(*) FILTER (WHERE t.status = 'completed') / NULLIF(count(*), 0), 2
+            (100.0 * count(*) FILTER (WHERE t.status = 'completed') / NULLIF(count(*), 0))::numeric, 2
         ),
         'ratings', (
             SELECT jsonb_build_object(
