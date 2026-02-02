@@ -1,460 +1,185 @@
-# pgAgentOS
+# pgAgentOS: AI Agent Operating System for PostgreSQL
 
-<div align="center">
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14+-336791.svg)](https://www.postgresql.org)
 
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-14+-blue?logo=postgresql)
-![License](https://img.shields.io/badge/license-GPL3-green)
-![Version](https://img.shields.io/badge/version-1.0.0-orange)
-
-**AI Agent Operating System & Framework built natively in PostgreSQL**
-
-*An Agent OS where every action is transparently recorded, observable, and intervenable.*
-
-</div>
+**pgAgentOS** is the first true **Agent Operating System** built entirely within PostgreSQL. It moves the AI runtime *to* the data layer, allowing you to build, deploy, and manage stateful, autonomous agents without the complexity of disjointed microservices or external orchestration frameworks.
 
 ---
 
-## 🎯 Overview
+## 🧠 Philosophy: Why pgAgentOS?
 
-**pgAgentOS** is an **Agent Operating System** designed to manage and execute AI agents directly within PostgreSQL.
-It manages the entire lifecycle of agents using only PostgreSQL, without the need for external frameworks like LangChain or CrewAI.
+The modern AI stack is becoming dangerously fragmented. A typical agentic application today consists of:
+1.  **Vector DB**: For embeddings.
+2.  **Application DB**: For transactional business data.
+3.  **App Server**: For API handling.
+4.  **Agent Framework**: LangChain/LangGraph/AutoGPT running on yet another server.
+5.  **Queue System**: To manage async agent tasks.
 
-### Why PostgreSQL?
+This architecture introduces massive latency, data synchronization headaches, and operational fragility.
 
-| Problem with Existing Frameworks | pgAgentOS Solution |
-|----------------------------------|--------------------|
-| Agent behavior is a "black box" | Every step is transparently recorded in the DB |
-| Difficult debugging | State can be queried via SQL at any time |
-| Complex state management | Consistency guaranteed via ACID transactions |
-| Difficult multi-tenancy | Perfect isolation via Row-Level Security (RLS) |
-| Separate logging/auditing | Immutable event logs built-in |
+**pgAgentOS** solves this by unifying the stack. It believes in **Data Gravity**:
+> *Agents rely on data (context, memory, business state). Therefore, agents should live where the data lives.*
 
----
-
-## 🏗️ Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Your Application                          │
-├─────────────────────────────────────────────────────────────────┤
-│                       External Runtime                           │
-│              (Python/Node.js + LLM API Client)                   │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│     ┌──────────────────────────────────────────────────────┐    │
-│     │                    pgAgentOS                          │    │
-│     │    ┌─────────────────────────────────────────────┐   │    │
-│     │    │              aos_agent                       │   │    │
-│     │    │   Agent → Conversation → Turn → Step        │   │    │
-│     │    └─────────────────────────────────────────────┘   │    │
-│     │    ┌─────────────┐  ┌─────────────┐  ┌───────────┐   │    │
-│     │    │ aos_persona │  │ aos_skills  │  │ aos_auth  │   │    │
-│     │    └─────────────┘  └─────────────┘  └───────────┘   │    │
-│     │    ┌─────────────┐  ┌─────────────┐  ┌───────────┐   │    │
-│     │    │   aos_kg    │  │ aos_embed   │  │ aos_meta  │   │    │
-│     │    └─────────────┘  └─────────────┘  └───────────┘   │    │
-│     └──────────────────────────────────────────────────────┘    │
-│                                                                  │
-│                         PostgreSQL 14+                           │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-### Core Concept: Conversation → Turn → Step
-
-```
-User: "Teach me about Python Asyncio"
-                    ↓
-┌─────────────────────────────────────────────────┐
-│  Turn #1                                         │
-│  ├─ Step 1: think     "Need to search..."        │
-│  ├─ Step 2: tool_call  web_search ← [Admin OK]   │
-│  ├─ Step 3: tool_result {...search results...}   │
-│  ├─ Step 4: think     "Summarizing..."          │
-│  └─ Step 5: respond   "# Python Asyncio..."      │
-└─────────────────────────────────────────────────┘
-                    ↓
-Agent: "# Python Asyncio is..."
-```
+### Core Principles
+1.  **Transactional Integrity**: An agent's "thought" should be as atomic and reliable as a financial transaction. If an agent step fails, the state rolls back perfectly.
+2.  **Zero-Latency Context**: Your agents have instant SQL access to your business data. No API calls or network hops required to "fetch user profile" or "check inventory".
+3.  **Stateful by Default**: Every interaction, memory, and state change is persisted immediately. You can kill the server, restart it, and the agent picks up exactly where it left off.
 
 ---
 
-## ✨ Key Features
+## 🏗 Architecture
 
-### 🔍 Full Observability
-- All reasoning processes (Chain of Thought) are recorded in the `step` table.
-- Complete tracking of tool calls and I/O.
-- Real-time monitoring via streaming views.
+pgAgentOS is implemented as a set of modular schemas within your PostgreSQL database.
 
-### 🎮 Human-in-the-Loop
-- Approve or reject tool calls.
-- Inject messages during conversation.
-- Override agent responses.
-- Real-time rating and feedback.
-
-### 🔐 Security & Multi-tenancy
-- Perfect tenant isolation using Row-Level Security.
-- Immutable audit logs.
-- Role-based skill permissions.
-
-### 📊 Analytics & Monitoring
-- Usage statistics per agent (tokens, cost, success rate).
-- Hourly activity metrics.
-- Tool usage patterns.
-
-### 🔌 LLM Independence
-- Support for various LLM presets (OpenAI, Anthropic, Google, Ollama).
-- Hierarchical parameter configuration (Model → Persona → Runtime).
-- Clean separation from external runtimes.
+| Schema | Role | Description |
+| :--- | :--- | :--- |
+| **`aos_auth`** | Security & Identity | Manages multi-tenancy (`tenant`), users (`principal`), and role-based access control (RBAC). Ensures one tenant cannot access another's agents or data. |
+| **`aos_meta`** | Hardware Abstraction | The "Device Driver" layer for LLMs. It abstracts away the differences between OpenAI, Anthropic, Gemini, and local Ollama models. |
+| **`aos_persona`** | Agent Identity | Defines *who* the agent is. Contains system prompts, personality traits, rules, and model configurations. |
+| **`aos_skills`** | Capabilities | The "Tool" layer. Registers capabilities like Web Search, SQL Execution, or RAG. Permissions can be granularly controlled per role. |
+| **`aos_core`** | Kernel | The execution engine. Tracks `runs` (conversations), `steps` (thoughts/acts), `event_log` (audit trail), and `session_memory`. |
+| **`aos_agent`** | API Layer | High-level functions (`run_turn`, `add_user_message`) used by your application to interact with the system. |
 
 ---
 
-## 📦 Installation
+## ⚡️ Quick Start
 
-### Requirements
+### 1. Requirements
+- **PostgreSQL 14+**
+- Extensions: `vector`, `pgcrypto`
 
-- PostgreSQL 14+
-- pgvector extension
-- pgcrypto extension
-
-### Install
-
+### 2. Installation
+Clone the repo and install the extension:
 ```bash
-# 1. Clone repository
-git clone https://github.com/your-org/pgAgentOS.git
-cd pgAgentOS
-
-# 2. Build extension (Optional)
-make
-sudo make install
-
-# 3. Create extension in PostgreSQL
-psql -d your_database -c "CREATE EXTENSION pgagentos CASCADE;"
+git clone https://github.com/your-repo/pgagentos.git
+cd pgagentos
+make install
 ```
 
-### Manual Install (Without Extension)
-
-```bash
-# Execute SQL files in order
-psql -d your_database -f sql/schemas/00_extensions.sql
-psql -d your_database -f sql/schemas/01_aos_meta.sql
-# ... (all schema files)
-psql -d your_database -f sql/functions/agent_loop_engine.sql
-psql -d your_database -f sql/triggers/immutability_triggers.sql
-psql -d your_database -f sql/views/admin_dashboard.sql
-psql -d your_database -f sql/rls/rls_policies.sql
+Enable it in your database:
+```sql
+CREATE EXTENSION vector;
+CREATE EXTENSION pgcrypto;
+CREATE EXTENSION pgagentos;
 ```
 
 ---
 
-## 🚀 Quick Start
+## 📖 Comprehensive Usage Guide
 
-### 1. Setup Tenant & User
+This guide walks you through building a **Postgres Expert Bot** that can answer questions about your database schema.
+
+### Step 1: Foundation (Tenant & User)
+Everything in pgAgentOS is isolated by Tenant.
 
 ```sql
--- Create Tenant
-INSERT INTO aos_auth.tenant (name, display_name)
-VALUES ('my_company', 'My Company')
-RETURNING tenant_id;
+-- 1. Create a Organization/Tenant
+INSERT INTO aos_auth.tenant (name, display_name) 
+VALUES ('tech_corp', 'Tech Corp Inc.');
 
--- Set Context
-SELECT aos_auth.set_tenant('your-tenant-uuid');
+-- 2. Get the Tenant ID (store this variable for later)
+-- Assume: 'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
+
+-- 3. Create a User (You)
+INSERT INTO aos_auth.principal (tenant_id, principal_type, display_name)
+VALUES ('a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11', 'user', 'Admin User');
 ```
 
-### 2. Create Persona
+### Step 2: The Brain (Model Setup)
+pgAgentOS creates default presets for popular models. You just need to ensure your environment variables (managed by the external runner) are set, or you can update the API keys in the database (secured via pgcrypto recommended).
+
+```sql
+-- View available models
+SELECT model_name, context_window FROM aos_meta.llm_model_registry WHERE is_active = true;
+```
+
+### Step 3: Identity (Create Persona)
+Let's define the "Postgres Expert".
 
 ```sql
 INSERT INTO aos_persona.persona (
-    tenant_id, name, system_prompt, traits
+    tenant_id, 
+    name, 
+    system_prompt, 
+    model_id
 ) VALUES (
-    aos_auth.current_tenant(),
-    'helpful_assistant',
-    'You are a helpful AI assistant. Answer concisely.',
-    '{"helpful": true, "concise": true}'
+    'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+    'pg_expert',
+    'You are a PostgreSQL Database Administrator. 
+     You have access to RAG tools to look up documentation. 
+     Always verify your SQL syntax before answering.',
+    (SELECT model_id FROM aos_meta.llm_model_registry WHERE model_name = 'gpt-4o')
 );
 ```
 
-### 3. Create Agent
+### Step 4: The Body (Agent & Conversation)
+Instantiate the agent and start a conversation thread.
 
 ```sql
-SELECT aos_agent.create_agent(
-    p_tenant_id := aos_auth.current_tenant(),
-    p_name := 'research_agent',
-    p_persona_id := 'your-persona-uuid',
-    p_tools := ARRAY['web_search', 'code_execute'],
-    p_config := '{"auto_approve_tools": false}'
+-- 1. Create the Agent
+INSERT INTO aos_agent.agent (tenant_id, name, persona_id)
+VALUES (
+    'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11',
+    'my_pg_bot',
+    (SELECT persona_id FROM aos_persona.persona WHERE name = 'pg_expert')
+);
+
+-- 2. Create a Conversation (Run)
+-- This returns a conversation_id, e.g., '123e4567-e89b-12d3-a456-426614174000'
+INSERT INTO aos_agent.conversation (agent_id, tenant_id)
+VALUES (
+    (SELECT agent_id FROM aos_agent.agent WHERE name = 'my_pg_bot'),
+    'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'
 );
 ```
 
-### 4. Start Conversation
+### Step 5: The Agent Loop (Execution)
+pgAgentOS is designed to be driven by a thin "worker" script (Python/Node/Go). The database manages the state; the worker just acts as the IO bridge to the LLM API.
 
-```sql
--- Create Conversation
-SELECT aos_agent.start_conversation(
-    p_agent_id := 'your-agent-uuid'
-);
+#### The Cycle:
 
--- Send Message
-SELECT aos_agent.send_message(
-    p_conversation_id := 'your-conversation-uuid',
-    p_message := 'How do I do async programming in Python?'
-);
-```
+1.  **Input**: User sends a message.
+    ```sql
+    SELECT aos_agent.add_user_message('conversation_id', 'How do I optimize a join?');
+    ```
+2.  **Start Turn**: Initialize the thinking process.
+    ```sql
+    SELECT aos_agent.start_turn('conversation_id');
+    ```
+3.  **Poll & Execute**: The worker polling loop.
+    ```sql
+    -- Get current state
+    SELECT * FROM aos_agent.run_turn('turn_id');
+    ```
+    The DB returns: `{"messages": [...], "tools": [...], "system_prompt": "..."}`
+    
+    The worker sends this payload to OpenAI/Anthropic.
 
-### 5. External Runtime Integration (Python Example)
-
-```python
-import psycopg2
-import openai
-
-conn = psycopg2.connect("postgresql://...")
-cur = conn.cursor()
-
-# Get execution info for the turn
-cur.execute("SELECT aos_agent.run_turn(%s)", (turn_id,))
-run_info = cur.fetchone()[0]
-
-# Call LLM
-response = openai.chat.completions.create(
-    model="gpt-4o",
-    messages=[
-        {"role": "system", "content": run_info['system_prompt']},
-        *run_info['messages']
-    ],
-    tools=run_info['tools']
-)
-
-# Record Result
-if response.choices[0].message.tool_calls:
-    tool_call = response.choices[0].message.tool_calls[0]
-    cur.execute("""
-        SELECT aos_agent.process_tool_call(%s, %s, %s)
-    """, (turn_id, tool_call.function.name, tool_call.function.arguments))
-else:
-    cur.execute("""
-        SELECT aos_agent.complete_turn(%s, %s, %s, %s)
-    """, (turn_id, response.choices[0].message.content, 
-          response.usage.total_tokens, 0.003))
-
-conn.commit()
-```
-
-### 6. Admin Monitoring
-
-```sql
--- Check real-time steps
-SELECT * FROM aos_agent.realtime_steps LIMIT 10;
-
--- Steps awaiting approval
-SELECT * FROM aos_agent.tool_call_queue;
-
--- Trace reasoning
-SELECT * FROM aos_agent.thinking_trace 
-WHERE conversation_id = 'your-conversation-uuid';
-
--- Approve tool call
-SELECT aos_agent.approve_step(
-    p_step_id := 'step-uuid',
-    p_approved := true,
-    p_admin_id := 'admin-uuid',
-    p_note := 'Approved'
-);
-```
+4.  **Observe & Act**:
+    *   **Case A: LLM wants to talk**: 
+        The worker writes the response back:
+        ```sql
+        SELECT aos_agent.finish_turn('turn_id', 'You should use an INNER JOIN...');
+        ```
+    *   **Case B: LLM wants to think/execute tool**:
+        The worker records the tool call:
+        ```sql
+        SELECT aos_agent.process_tool_call('turn_id', 'web_search', '{"query": "postgres join optimization"}');
+        ```
+        The worker *executes* the tool (e.g., searches Google), then reports the result:
+        ```sql
+        SELECT aos_agent.record_tool_result('turn_id', 'web_search', '{"result": "..."}');
+        ```
+        The loop repeats until the agent answers.
 
 ---
 
-## 📁 Project Structure
+## 🔒 Security
 
-```
-pgAgentOS/
-├── pgagentos.control          # Extension control file
-├── Makefile                   # PGXS build configuration
-├── README.md                  # This file
-│
-├── sql/
-│   ├── schemas/               # Table definitions
-│   │   ├── 00_extensions.sql  # Dependencies (pgvector, pgcrypto)
-│   │   ├── 01_aos_meta.sql    # Metadata & LLM registry
-│   │   ├── 02_aos_auth.sql    # Multi-tenancy & principals
-│   │   ├── 03_aos_persona.sql # Agent personas
-│   │   ├── 04_aos_skills.sql  # Tool registry
-│   │   ├── 05_aos_core.sql    # Run & event logging
-│   │   ├── 06_aos_workflow.sql# Graph-based workflows (legacy)
-│   │   ├── 07_aos_egress.sql  # External API control
-│   │   ├── 08_aos_kg.sql      # Knowledge graph
-│   │   ├── 09_aos_embed.sql   # Vector embeddings
-│   │   ├── 10_aos_collab.sql  # Task collaboration
-│   │   ├── 11_aos_policy.sql  # Policy hooks
-│   │   ├── 12_aos_agent.sql   # Agent Loop (primary)
-│   │   └── 13_aos_multi_agent.sql # Multi-Agent System
-│   │
-│   ├── functions/             # Core functions
-│   │   ├── agent_loop_engine.sql   # Main agent execution
-│   │   ├── rag_retrieval.sql       # Hybrid RAG search
-│   │   ├── utilities.sql           # Helper functions
-│   │   └── workflow_engine.sql     # Graph workflow (legacy)
-│   │
-│   ├── triggers/              # Immutability & validation
-│   │   └── immutability_triggers.sql
-│   │
-│   ├── views/                 # Monitoring views
-│   │   ├── admin_dashboard.sql
-│   │   └── system_views.sql
-│   │
-│   └── rls/                   # Row-Level Security
-│       └── rls_policies.sql
-│
-├── examples/                  # Usage examples
-│   ├── simple_agent.sql       # Basic agent example
-│   ├── multi_agent_collab.sql # Consensus/Debate example
-│   └── sample_workflow.sql    # Graph workflow example
-│
-└── tests/                     # Test suite
-    └── sql/
-        └── test_basic.sql
-```
-
----
-
-## 🔧 Schema Overview
-
-| Schema | Purpose | Key Tables |
-|--------|---------|------------|
-| `aos_agent` | **Core** Agent Loop | `agent`, `conversation`, `turn`, `step` |
-| `aos_multi_agent` | **Multi-Agent** | `team`, `discussion`, `agent_message` |
-| `aos_persona` | Agent Personality | `persona` |
-| `aos_skills` | Tools Registry | `skill`, `skill_impl`, `role_skill` |
-| `aos_auth` | Auth/Multi-tenancy | `tenant`, `principal`, `role_grant` |
-| `aos_meta` | Metadata | `llm_model_registry` |
-| `aos_kg` | Knowledge Graph | `doc`, `doc_relationship` |
-| `aos_embed` | Vector Embeddings | `embedding`, `job` |
-| `aos_egress` | External API Control | `request`, `allowlist` |
-| `aos_policy` | Policy Hooks | `hooks`, `policy_rule` |
-
----
-
-## 🛠️ Core Functions
-
-### Agent Management
-
-| Function | Description |
-|----------|-------------|
-| `aos_agent.create_agent(...)` | Create new agent |
-| `aos_agent.start_conversation(...)` | Start conversation |
-| `aos_agent.send_message(...)` | Send user message |
-| `aos_agent.run_turn(...)` | Get turn execution info |
-| `aos_agent.complete_turn(...)` | Complete turn |
-
-### Tool Execution
-
-| Function | Description |
-|----------|-------------|
-| `aos_agent.process_tool_call(...)` | Process tool call (with approval flow) |
-| `aos_agent.record_tool_result(...)` | Record tool result |
-| `aos_agent.record_thinking(...)` | Record reasoning |
-| `aos_agent.approve_step(...)` | Approve/Reject step |
-
-### Admin Intervention
-
-| Function | Description |
-|----------|-------------|
-| `aos_agent.bulk_approve_tools(...)` | Bulk approval |
-| `aos_agent.inject_message(...)` | Inject message into chat |
-| `aos_agent.override_response(...)` | Override response |
-| `aos_agent.pause_conversation(...)` | Pause conversation |
-| `aos_agent.rate_turn(...)` | Rate turn |
-| `aos_agent.flag_issue(...)` | Flag issue |
-
-### Monitoring
-
-| View | Description |
-|------|-------------|
-| `aos_agent.realtime_steps` | Real-time step stream |
-| `aos_agent.tool_call_queue` | Approval queue |
-| `aos_agent.thinking_trace` | Reasoning trace |
-| `aos_agent.conversation_timeline` | Full timeline |
-| `aos_agent.agent_stats` | Agent stats |
-| `aos_agent.dashboard_overview` | Dashboard overview |
-
----
-
-## 🔐 Security
-
-### Multi-tenancy (RLS)
-
-All tables use Row-Level Security:
-
-```sql
--- Set Tenant Context
-SELECT aos_auth.set_tenant('tenant-uuid');
-
--- Query only returns data for current tenant
-SELECT * FROM aos_agent.agent;
-```
-
-### Immutability
-
-`event_log` and finalized `workflow_state` cannot be modified or deleted.
-
----
-
-## 📈 Analytics
-
-### Agent Analytics
-
-```sql
-SELECT aos_agent.get_agent_analytics(
-    'agent-uuid',
-    7  -- last 7 days
-);
-```
-
-Returns:
-```json
-{
-  "total_conversations": 42,
-  "total_turns": 156,
-  "total_tokens": 245000,
-  "total_cost_usd": 4.82,
-  "avg_turn_duration_ms": 2340,
-  "success_rate": 94.5,
-  "tool_usage": {"web_search": 45, "code_execute": 23}
-}
-```
-
-### Hourly Activity
-
-```sql
-SELECT * FROM aos_agent.get_hourly_activity('tenant-uuid', 1);
-```
-
----
-
-## 🔮 Roadmap
-
-- [ ] **v1.1**: Streaming response sup
-- [ ] **v1.2**: Advanced Multi-Agent patterns (Swarm)
-- [ ] **v1.3**: Automatic memory compression
-- [ ] **v2.0**: GUI Admin Dashboard
-- [ ] **v2.1**: Kubernetes Operator
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md) first.
-
----
+*   **Row Level Security (RLS)**: pgAgentOS is designed with RLS in mind. Tenants can only see their own data.
+*   **Approval Mode**: High-risk tools (like `delete_table` or `send_email`) can be configured to require human approval before execution. The agent loop naturally pauses at `process_tool_call` returning `status: awaiting_approval`.
 
 ## 📄 License
 
-GPL 3 License - see [LICENSE](LICENSE) for details.
-
----
-
-<div align="center">
-
-**Built with ❤️ for the AI Agent community**
-
-[Documentation](docs/) • [Examples](examples/) • [Issues](https://github.com/your-org/pgAgentOS/issues)
-
-</div>
+This project is licensed under the **GNU General Public License v3.0 (GPLv3)**.
