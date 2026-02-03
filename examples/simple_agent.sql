@@ -1,330 +1,117 @@
 -- ============================================================================
 -- pgAgentOS: Simple Agent Example
--- Example using the new Agent Loop Architecture
+-- Purpose: Demonstrate basic agent creation and conversation
 -- ============================================================================
 
--- ============================================================================
--- 1. Basic Setup
--- ============================================================================
+\echo '=== pgAgentOS Simple Agent Example ==='
 
--- Create Tenant
+-- 1. Create Tenant
 INSERT INTO aos_auth.tenant (tenant_id, name, display_name)
-VALUES ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'demo', 'Demo Company')
+VALUES ('11111111-1111-1111-1111-111111111111', 'demo_tenant', 'Demo Company')
 ON CONFLICT (name) DO NOTHING;
 
--- Create Admin User
-INSERT INTO aos_auth.principal (principal_id, tenant_id, principal_type, display_name)
-VALUES ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'human', 'Admin User')
-ON CONFLICT DO NOTHING;
+\echo '✓ Tenant created'
 
--- Set Tenant Context
-SELECT aos_auth.set_tenant('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid);
+-- 2. Create User
+INSERT INTO aos_auth.principal (tenant_id, name, role)
+VALUES ('11111111-1111-1111-1111-111111111111', 'demo_user', 'admin')
+ON CONFLICT (tenant_id, name) DO NOTHING;
 
--- ============================================================================
--- 2. Create Persona
--- ============================================================================
+\echo '✓ User created'
 
-INSERT INTO aos_persona.persona (
-    persona_id,
-    tenant_id,
-    name,
-    system_prompt,
-    traits,
-    override_params
-)
-VALUES (
-    'cccccccc-cccc-cccc-cccc-cccccccccccc'::uuid,
-    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid,
-    'helpful_assistant',
-    'You are a helpful AI assistant. You can use tools when needed.
-    
-When you need to search for information, use the web_search tool.
-When you need to run code, use the code_execute tool.
-Always explain your thinking process before taking action.
-Be concise but thorough in your responses.',
-    '{"helpful": true, "cautious": true}'::jsonb,
-    '{"temperature": 0.7}'::jsonb
-)
-ON CONFLICT DO NOTHING;
-
--- ============================================================================
--- 3. Create Agent
--- ============================================================================
-
-INSERT INTO aos_agent.agent (
-    agent_id,
-    tenant_id,
-    name,
-    display_name,
-    description,
-    persona_id,
-    tools,
-    config
-)
-VALUES (
-    'dddddddd-dddd-dddd-dddd-dddddddddddd'::uuid,
-    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::uuid,
-    'research_assistant',
-    'Research Assistant',
-    'Research assistant capable of web search and code execution',
-    'cccccccc-cccc-cccc-cccc-cccccccccccc'::uuid,
-    ARRAY['web_search', 'code_execute', 'rag_retrieve'],
-    '{
-        "max_iterations": 10,
-        "max_tokens_per_turn": 4096,
-        "thinking_visible": true,
-        "auto_approve_tools": false,
-        "pause_before_tool": false,
-        "pause_after_tool": false
-    }'::jsonb
-)
-ON CONFLICT DO NOTHING;
-
-SELECT 'Agent created!' as status;
-
--- ============================================================================
--- 4. Start Conversation
--- ============================================================================
-
--- Start Conversation
+-- 3. Create Persona
 DO $$
 DECLARE
-    v_conversation_id uuid;
-    v_turn_id uuid;
+    v_persona_id uuid;
+    v_model_id uuid;
 BEGIN
-    -- Create Conversation
-    v_conversation_id := aos_agent.start_conversation(
-        p_agent_id := 'dddddddd-dddd-dddd-dddd-dddddddddddd'::uuid,
-        p_user_principal_id := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'::uuid,
-        p_context := '{"intent": "research"}'::jsonb
-    );
+    SELECT model_id INTO v_model_id 
+    FROM aos_core.model WHERE name = 'gpt-4o';
     
-    RAISE NOTICE 'Conversation started: %', v_conversation_id;
+    -- Check if persona exists
+    SELECT persona_id INTO v_persona_id
+    FROM aos_persona.persona 
+    WHERE tenant_id = '11111111-1111-1111-1111-111111111111' 
+    AND name = 'HelpfulAssistant';
     
-    -- Send First Message
-    v_turn_id := aos_agent.send_message(
-        p_conversation_id := v_conversation_id,
-        p_message := 'Tell me how to do asynchronous programming in Python.'
-    );
-    
-    RAISE NOTICE 'Turn created: %', v_turn_id;
-    
-    -- Check Turn Execution Info
-    RAISE NOTICE 'Run turn info: %', aos_agent.run_turn(v_turn_id);
-END $$;
-
--- ============================================================================
--- 5. Simulate Agent Behavior
--- ============================================================================
-
--- In reality, the external LLM runtime performs these tasks.
--- Here we simulate them.
-
-DO $$
-DECLARE
-    v_turn_id uuid;
-    v_step_id uuid;
-BEGIN
-    -- Get Latest Turn
-    SELECT turn_id INTO v_turn_id
-    FROM aos_agent.turn
-    ORDER BY started_at DESC
-    LIMIT 1;
-    
-    -- Step 1: Record Thinking
-    PERFORM aos_agent.record_thinking(
-        v_turn_id,
-        'The user asked about asynchronous programming in Python. 
-I should explain async/await and asyncio. 
-I will first search the web for the latest information.',
-        'use_tool: web_search'
-    );
-    RAISE NOTICE 'Thinking step recorded';
-    
-    -- Step 2: Tool Call (Requires Approval)
-    v_step_id := (
-        SELECT step_id FROM aos_agent.step
-        WHERE turn_id = v_turn_id
-        ORDER BY step_number DESC
-        LIMIT 1
-    );
-    
-    -- Process Tool Call
-    RAISE NOTICE 'Tool call result: %', aos_agent.process_tool_call(
-        v_turn_id,
-        'web_search',
-        '{"query": "python asyncio tutorial 2024"}'::jsonb
-    );
-END $$;
-
--- ============================================================================
--- 6. Admin Monitoring
--- ============================================================================
-
--- Check Pending Tool Calls
-SELECT '=== Pending Tool Calls ===' as section;
-SELECT * FROM aos_agent.tool_call_queue;
-
--- Trace Thinking Process
-SELECT '=== Agent Thinking Process ===' as section;
-SELECT * FROM aos_agent.thinking_trace;
-
--- Real-time Steps
-SELECT '=== Real-time Steps ===' as section;
-SELECT step_type, content, status, seconds_ago 
-FROM aos_agent.realtime_steps 
-LIMIT 10;
-
--- ============================================================================
--- 7. Simulate Admin Intervention
--- ============================================================================
-
-DO $$
-DECLARE
-    v_pending_step_id uuid;
-    v_admin_id uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'::uuid;
-BEGIN
-    -- Find Pending Step
-    SELECT step_id INTO v_pending_step_id
-    FROM aos_agent.step
-    WHERE status = 'pending' AND step_type = 'tool_call'
-    ORDER BY created_at
-    LIMIT 1;
-    
-    IF v_pending_step_id IS NOT NULL THEN
-        -- Approve
-        PERFORM aos_agent.approve_step(
-            v_pending_step_id,
-            true,
-            v_admin_id,
-            'Web search allowed'
+    IF v_persona_id IS NULL THEN
+        v_persona_id := aos_persona.create_persona(
+            '11111111-1111-1111-1111-111111111111',
+            'HelpfulAssistant',
+            'You are a helpful AI assistant. You answer questions clearly and concisely.',
+            v_model_id
         );
-        RAISE NOTICE 'Tool call approved: %', v_pending_step_id;
-        
-        -- Record Tool Result (Simulation)
-        PERFORM aos_agent.record_tool_result(
-            (SELECT turn_id FROM aos_agent.step WHERE step_id = v_pending_step_id),
-            'web_search',
-            '{
-                "results": [
-                    {"title": "Python Asyncio Tutorial", "snippet": "Asynchronous programming using async/await..."},
-                    {"title": "Async Programming in Python", "snippet": "Event loops and coroutines..."}
-                ]
-            }'::jsonb,
-            true
-        );
-        RAISE NOTICE 'Tool result recorded';
+        RAISE NOTICE '✓ Persona created: %', v_persona_id;
     ELSE
-        RAISE NOTICE 'No pending tool calls found';
+        RAISE NOTICE '✓ Persona already exists: %', v_persona_id;
     END IF;
 END $$;
 
--- ============================================================================
--- 8. Complete Response
--- ============================================================================
+-- 4. Create Agent
+INSERT INTO aos_agent.agent (tenant_id, name, persona_id, tools)
+SELECT 
+    '11111111-1111-1111-1111-111111111111',
+    'SimpleBot',
+    p.persona_id,
+    ARRAY['rag_search', 'llm_chat']
+FROM aos_persona.persona p
+WHERE p.tenant_id = '11111111-1111-1111-1111-111111111111'
+AND p.name = 'HelpfulAssistant'
+ON CONFLICT (tenant_id, name) DO NOTHING;
 
+\echo '✓ Agent created'
+
+-- 5. Start a Conversation
 DO $$
 DECLARE
+    v_agent_id uuid;
+    v_conv_id uuid;
     v_turn_id uuid;
 BEGIN
-    -- Get Latest Turn
-    SELECT turn_id INTO v_turn_id
-    FROM aos_agent.turn
-    ORDER BY started_at DESC
-    LIMIT 1;
+    SELECT agent_id INTO v_agent_id
+    FROM aos_agent.agent
+    WHERE tenant_id = '11111111-1111-1111-1111-111111111111'
+    AND name = 'SimpleBot';
     
-    -- Final Thought
-    PERFORM aos_agent.record_thinking(
-        v_turn_id,
-        'Based on the web search results, I will explain Python asynchronous programming.',
-        'respond'
-    );
+    -- Start conversation
+    v_conv_id := aos_agent.start_conversation(v_agent_id, 'Demo Conversation');
+    RAISE NOTICE '✓ Conversation started: %', v_conv_id;
     
-    -- Complete Response
-    PERFORM aos_agent.complete_turn(
-        v_turn_id,
-        '# Python Asynchronous Programming
-
-In Python, asynchronous programming uses the `asyncio` module and `async/await` syntax.
-
-## Basic Example
-
-```python
-import asyncio
-
-async def main():
-    print("Hello")
-    await asyncio.sleep(1)
-    print("World")
-
-asyncio.run(main())
-```
-
-## Core Concepts
-
-1. **Coroutine**: Function defined with `async def`
-2. **await**: Pauses execution of the coroutine and waits for the result
-3. **Event Loop**: Schedules and executes asynchronous tasks
-
-Do you have any more questions?',
-        1500,  -- tokens
-        0.003  -- cost
-    );
+    -- Send first message
+    v_turn_id := aos_agent.send_message(v_conv_id, 'Hello! What can you help me with?');
+    RAISE NOTICE '✓ Message sent, turn: %', v_turn_id;
     
-    RAISE NOTICE 'Turn completed!';
+    -- Store in memory
+    PERFORM aos_agent.store_memory(v_conv_id, 'user_name', '"Demo User"'::jsonb);
+    RAISE NOTICE '✓ Memory stored';
+    
+    -- Recall memory
+    RAISE NOTICE 'Memory: %', aos_agent.recall_memory(v_conv_id);
 END $$;
 
--- ============================================================================
--- 9. Verify Results
--- ============================================================================
+-- 6. View conversation state
+\echo ''
+\echo '=== Conversation State ==='
+SELECT 
+    c.conversation_id,
+    a.name as agent,
+    c.title,
+    c.status,
+    COUNT(t.turn_id) as turns
+FROM aos_agent.conversation c
+JOIN aos_agent.agent a ON a.agent_id = c.agent_id
+LEFT JOIN aos_agent.turn t ON t.conversation_id = c.conversation_id
+WHERE c.tenant_id = '11111111-1111-1111-1111-111111111111'
+GROUP BY c.conversation_id, a.name, c.title, c.status;
 
--- Conversation History
-SELECT '=== Conversation History ===' as section;
-SELECT aos_agent.get_conversation_history(
-    (SELECT conversation_id FROM aos_agent.conversation ORDER BY started_at DESC LIMIT 1),
-    true  -- include steps
-);
+-- 7. View runs
+\echo ''
+\echo '=== Runs ==='
+SELECT run_id, run_type, status, created_at
+FROM aos_core.run
+WHERE tenant_id = '11111111-1111-1111-1111-111111111111'
+ORDER BY created_at DESC
+LIMIT 5;
 
--- Turn State
-SELECT '=== Turn State ===' as section;
-SELECT aos_agent.get_turn_state(
-    (SELECT turn_id FROM aos_agent.turn ORDER BY started_at DESC LIMIT 1)
-);
-
--- Timeline
-SELECT '=== Conversation Timeline ===' as section;
-SELECT actor, step_type, 
-       CASE WHEN length(content) > 100 THEN substring(content, 1, 100) || '...' ELSE content END as content_preview,
-       timestamp
-FROM aos_agent.conversation_timeline
-WHERE conversation_id = (SELECT conversation_id FROM aos_agent.conversation ORDER BY started_at DESC LIMIT 1)
-ORDER BY timestamp;
-
--- ============================================================================
--- 10. Admin Rating
--- ============================================================================
-
-DO $$
-DECLARE
-    v_turn_id uuid;
-    v_admin_id uuid := 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'::uuid;
-BEGIN
-    SELECT turn_id INTO v_turn_id
-    FROM aos_agent.turn
-    ORDER BY started_at DESC
-    LIMIT 1;
-    
-    -- Rate
-    PERFORM aos_agent.rate_turn(
-        v_turn_id,
-        v_admin_id,
-        4,
-        '{"accuracy": 5, "helpfulness": 4, "clarity": 4}'::jsonb
-    );
-    
-    RAISE NOTICE 'Turn rated!';
-END $$;
-
--- Agent Analytics
-SELECT '=== Agent Analytics ===' as section;
-SELECT aos_agent.get_agent_analytics('dddddddd-dddd-dddd-dddd-dddddddddddd'::uuid, 7);
+\echo ''
+\echo '=== Example Complete ==='

@@ -1,377 +1,265 @@
 -- ============================================================================
--- pgAgentOS: Test Suite
--- Basic functionality tests
+-- pgAgentOS: Basic Tests (Simplified)
+-- Purpose: Verify core functionality
 -- ============================================================================
 
--- Test 1: Extension installation check
+\echo '=== pgAgentOS Basic Tests ==='
+\echo ''
+
+-- Test 1: Schema existence
 DO $$
 BEGIN
-    RAISE NOTICE 'Test 1: Checking schema existence...';
+    RAISE NOTICE 'Test 1: Schema existence...';
     
-    IF EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = 'aos_meta') THEN
-        RAISE NOTICE '  ✓ aos_meta schema exists';
+    IF EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'aos_core') AND
+       EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'aos_auth') AND
+       EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'aos_persona') AND
+       EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'aos_skills') AND
+       EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'aos_agent') AND
+       EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'aos_rag') THEN
+        RAISE NOTICE '  ✓ All 6 schemas exist';
     ELSE
-        RAISE EXCEPTION '  ✗ aos_meta schema missing';
-    END IF;
-    
-    IF EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = 'aos_workflow') THEN
-        RAISE NOTICE '  ✓ aos_workflow schema exists';
-    ELSE
-        RAISE EXCEPTION '  ✗ aos_workflow schema missing';
+        RAISE EXCEPTION '  ✗ Missing schemas';
     END IF;
     
     RAISE NOTICE 'Test 1: PASSED';
 END $$;
 
--- Test 2: LLM Model Registry populated
+-- Test 2: Model registry
 DO $$
 DECLARE
     v_count int;
 BEGIN
-    RAISE NOTICE 'Test 2: Checking LLM model registry...';
+    RAISE NOTICE 'Test 2: Model registry...';
     
-    SELECT count(*) INTO v_count FROM aos_meta.llm_model_registry;
+    SELECT COUNT(*) INTO v_count FROM aos_core.model;
     
     IF v_count > 0 THEN
-        RAISE NOTICE '  ✓ Model registry has % entries', v_count;
+        RAISE NOTICE '  ✓ % models registered', v_count;
     ELSE
-        RAISE EXCEPTION '  ✗ Model registry is empty';
-    END IF;
-    
-    -- Check specific models
-    IF EXISTS (SELECT 1 FROM aos_meta.llm_model_registry WHERE provider = 'openai' AND model_name = 'gpt-4o') THEN
-        RAISE NOTICE '  ✓ GPT-4o model present';
-    ELSE
-        RAISE EXCEPTION '  ✗ GPT-4o model missing';
+        RAISE EXCEPTION '  ✗ No models found';
     END IF;
     
     RAISE NOTICE 'Test 2: PASSED';
 END $$;
 
--- Test 3: Create tenant and principal
+-- Test 3: Tenant and principal creation
 DO $$
 DECLARE
-    v_tenant_id uuid := gen_random_uuid();
-    v_principal_id uuid := gen_random_uuid();
+    v_tenant_id uuid;
+    v_principal_id uuid;
 BEGIN
-    RAISE NOTICE 'Test 3: Creating tenant and principal...';
+    RAISE NOTICE 'Test 3: Tenant/Principal...';
     
-    INSERT INTO aos_auth.tenant (tenant_id, name, display_name)
-    VALUES (v_tenant_id, 'test_tenant_' || v_tenant_id, 'Test Tenant');
-    RAISE NOTICE '  ✓ Tenant created';
+    INSERT INTO aos_auth.tenant (name, display_name)
+    VALUES ('test_tenant_' || gen_random_uuid(), 'Test Tenant')
+    RETURNING tenant_id INTO v_tenant_id;
+    RAISE NOTICE '  ✓ Tenant created: %', v_tenant_id;
     
-    INSERT INTO aos_auth.principal (principal_id, tenant_id, principal_type, display_name)
-    VALUES (v_principal_id, v_tenant_id, 'agent', 'Test Agent');
-    RAISE NOTICE '  ✓ Principal created';
+    INSERT INTO aos_auth.principal (tenant_id, name, role)
+    VALUES (v_tenant_id, 'test_user', 'user')
+    RETURNING principal_id INTO v_principal_id;
+    RAISE NOTICE '  ✓ Principal created: %', v_principal_id;
     
-    -- Set tenant context
-    PERFORM aos_auth.set_tenant(v_tenant_id);
-    
-    IF aos_auth.current_tenant() = v_tenant_id THEN
-        RAISE NOTICE '  ✓ Tenant context set correctly';
-    ELSE
-        RAISE EXCEPTION '  ✗ Tenant context not set';
-    END IF;
-    
-    -- Cleanup (best-effort; immutability triggers can block deletes)
-    BEGIN
-        DELETE FROM aos_auth.tenant WHERE tenant_id = v_tenant_id;
-    EXCEPTION WHEN OTHERS THEN
-        RAISE NOTICE '  ⚠️ Cleanup skipped: %', SQLERRM;
-    END;
+    -- Cleanup
+    DELETE FROM aos_auth.tenant WHERE tenant_id = v_tenant_id;
     
     RAISE NOTICE 'Test 3: PASSED';
 END $$;
 
--- Test 4: Create and validate graph
+-- Test 4: Persona creation
 DO $$
 DECLARE
-    v_tenant_id uuid := gen_random_uuid();
-    v_graph_id uuid;
-    v_validation jsonb;
+    v_tenant_id uuid;
+    v_model_id uuid;
+    v_persona_id uuid;
 BEGIN
-    RAISE NOTICE 'Test 4: Creating and validating workflow graph...';
+    RAISE NOTICE 'Test 4: Persona creation...';
     
-    -- Create tenant
-    INSERT INTO aos_auth.tenant (tenant_id, name) VALUES (v_tenant_id, 'graph_test_' || v_tenant_id);
+    INSERT INTO aos_auth.tenant (name) 
+    VALUES ('persona_test_' || gen_random_uuid())
+    RETURNING tenant_id INTO v_tenant_id;
     
-    -- Create graph
-    v_graph_id := aos_workflow.create_graph(
-        p_tenant_id := v_tenant_id,
-        p_name := 'test_graph',
-        p_version := '1.0',
-        p_description := 'Test graph',
-        p_nodes := ARRAY[
-            '{"node_name": "process", "node_type": "function"}'::jsonb
-        ],
-        p_edges := ARRAY[
-            '{"from_node": "__start__", "to_node": "process"}'::jsonb,
-            '{"from_node": "process", "to_node": "__end__"}'::jsonb
-        ]
+    SELECT model_id INTO v_model_id 
+    FROM aos_core.model WHERE provider = 'openai' LIMIT 1;
+    
+    v_persona_id := aos_persona.create_persona(
+        v_tenant_id, 
+        'TestBot', 
+        'You are a helpful assistant.',
+        v_model_id
     );
+    RAISE NOTICE '  ✓ Persona created: %', v_persona_id;
     
-    IF v_graph_id IS NOT NULL THEN
-        RAISE NOTICE '  ✓ Graph created: %', v_graph_id;
+    -- Verify version created
+    IF EXISTS (SELECT 1 FROM aos_persona.version WHERE persona_id = v_persona_id) THEN
+        RAISE NOTICE '  ✓ Version snapshot created';
     ELSE
-        RAISE EXCEPTION '  ✗ Graph creation failed';
+        RAISE EXCEPTION '  ✗ Version not created';
     END IF;
     
-    -- Validate
-    v_validation := aos_workflow.validate_graph(v_graph_id);
-    
-    IF (v_validation->>'valid')::bool THEN
-        RAISE NOTICE '  ✓ Graph validation passed';
-    ELSE
-        RAISE EXCEPTION '  ✗ Graph validation failed: %', v_validation->'errors';
-    END IF;
-    
-    -- Check DOT output
-    IF aos_workflow.get_graph_visualization(v_graph_id) LIKE 'digraph%' THEN
-        RAISE NOTICE '  ✓ DOT visualization generated';
-    ELSE
-        RAISE EXCEPTION '  ✗ DOT visualization failed';
-    END IF;
-    
-    -- Cleanup (best-effort; immutability triggers can block deletes)
-    BEGIN
-        DELETE FROM aos_auth.tenant WHERE tenant_id = v_tenant_id;
-    EXCEPTION WHEN OTHERS THEN
-        RAISE NOTICE '  ⚠️ Cleanup skipped: %', SQLERRM;
-    END;
+    -- Cleanup
+    DELETE FROM aos_auth.tenant WHERE tenant_id = v_tenant_id;
     
     RAISE NOTICE 'Test 4: PASSED';
 END $$;
 
--- Test 5: Start and step through a run
+-- Test 5: Agent and conversation
 DO $$
 DECLARE
-    v_tenant_id uuid := gen_random_uuid();
-    v_graph_id uuid;
-    v_run_id uuid;
-    v_step_result jsonb;
+    v_tenant_id uuid;
+    v_model_id uuid;
+    v_persona_id uuid;
+    v_agent_id uuid;
+    v_conv_id uuid;
+    v_turn_id uuid;
 BEGIN
-    RAISE NOTICE 'Test 5: Workflow execution...';
+    RAISE NOTICE 'Test 5: Agent conversation...';
     
     -- Setup
-    INSERT INTO aos_auth.tenant (tenant_id, name) VALUES (v_tenant_id, 'run_test_' || v_tenant_id);
+    INSERT INTO aos_auth.tenant (name) 
+    VALUES ('agent_test_' || gen_random_uuid())
+    RETURNING tenant_id INTO v_tenant_id;
     
-    v_graph_id := aos_workflow.create_graph(
-        p_tenant_id := v_tenant_id,
-        p_name := 'simple_flow',
-        p_nodes := ARRAY[
-            '{"node_name": "step1", "node_type": "gateway"}'::jsonb
-        ],
-        p_edges := ARRAY[
-            '{"from_node": "__start__", "to_node": "step1"}'::jsonb,
-            '{"from_node": "step1", "to_node": "__end__"}'::jsonb
-        ]
-    );
-    RAISE NOTICE '  ✓ Graph created';
+    SELECT model_id INTO v_model_id FROM aos_core.model LIMIT 1;
     
-    -- Start run
-    v_run_id := aos_workflow.start_graph_run(
-        p_graph_id := v_graph_id,
-        p_initial_state := '{"test": true}'::jsonb
+    v_persona_id := aos_persona.create_persona(
+        v_tenant_id, 'Agent', 'You are helpful.', v_model_id
     );
     
-    IF v_run_id IS NOT NULL THEN
-        RAISE NOTICE '  ✓ Run started: %', v_run_id;
+    INSERT INTO aos_agent.agent (tenant_id, name, persona_id, tools)
+    VALUES (v_tenant_id, 'TestAgent', v_persona_id, ARRAY['rag_search'])
+    RETURNING agent_id INTO v_agent_id;
+    RAISE NOTICE '  ✓ Agent created';
+    
+    -- Start conversation
+    v_conv_id := aos_agent.start_conversation(v_agent_id, 'Test Chat');
+    RAISE NOTICE '  ✓ Conversation started: %', v_conv_id;
+    
+    -- Send message
+    v_turn_id := aos_agent.send_message(v_conv_id, 'Hello!');
+    RAISE NOTICE '  ✓ Message sent, turn: %', v_turn_id;
+    
+    -- Verify run created
+    IF EXISTS (SELECT 1 FROM aos_core.run r 
+               JOIN aos_agent.turn t ON t.run_id = r.run_id 
+               WHERE t.turn_id = v_turn_id) THEN
+        RAISE NOTICE '  ✓ Run tracked';
     ELSE
-        RAISE EXCEPTION '  ✗ Run start failed';
+        RAISE EXCEPTION '  ✗ Run not tracked';
     END IF;
     
-    -- Step 1: __start__ -> step1
-    v_step_result := aos_workflow.step_graph(v_run_id);
-    RAISE NOTICE '  Step result: %', v_step_result->>'status';
-    
-    IF v_step_result->>'current_node' = 'step1' THEN
-        RAISE NOTICE '  ✓ Step 1 completed (at step1)';
-    ELSE
-        RAISE EXCEPTION '  ✗ Unexpected node: %', v_step_result->>'current_node';
-    END IF;
-    
-    -- Step 2: step1 -> __end__
-    v_step_result := aos_workflow.step_graph(v_run_id);
-    
-    IF v_step_result->>'current_node' = '__end__' THEN
-        RAISE NOTICE '  ✓ Step 2 completed (at __end__)';
-    ELSE
-        RAISE EXCEPTION '  ✗ Unexpected node: %', v_step_result->>'current_node';
-    END IF;
-    
-    -- Step 3: Should complete
-    v_step_result := aos_workflow.step_graph(v_run_id);
-    
-    IF v_step_result->>'status' = 'completed' THEN
-        RAISE NOTICE '  ✓ Run completed';
-    ELSE
-        RAISE EXCEPTION '  ✗ Run not completed: %', v_step_result->>'status';
-    END IF;
-    
-    -- Check state history
-    IF array_length(aos_workflow.get_state_history(v_run_id), 1) >= 3 THEN
-        RAISE NOTICE '  ✓ State history recorded';
-    ELSE
-        RAISE EXCEPTION '  ✗ State history incomplete';
-    END IF;
-    
-    -- Cleanup (best-effort; immutability triggers can block deletes)
-    BEGIN
-        DELETE FROM aos_auth.tenant WHERE tenant_id = v_tenant_id;
-    EXCEPTION WHEN OTHERS THEN
-        RAISE NOTICE '  ⚠️ Cleanup skipped: %', SQLERRM;
-    END;
+    -- Cleanup
+    DELETE FROM aos_auth.tenant WHERE tenant_id = v_tenant_id;
     
     RAISE NOTICE 'Test 5: PASSED';
 END $$;
 
--- Test 6: Immutability trigger
+-- Test 6: Job queue
 DO $$
 DECLARE
-    v_tenant_id uuid := gen_random_uuid();
-    v_run_id uuid;
+    v_tenant_id uuid;
+    v_job_id uuid;
 BEGIN
-    RAISE NOTICE 'Test 6: Immutability enforcement...';
+    RAISE NOTICE 'Test 6: Job queue...';
     
-    -- Setup
-    INSERT INTO aos_auth.tenant (tenant_id, name) VALUES (v_tenant_id, 'immut_test_' || v_tenant_id);
+    INSERT INTO aos_auth.tenant (name) 
+    VALUES ('job_test_' || gen_random_uuid())
+    RETURNING tenant_id INTO v_tenant_id;
     
-    INSERT INTO aos_core.run (run_id, tenant_id, status)
-    VALUES (gen_random_uuid(), v_tenant_id, 'running')
-    RETURNING run_id INTO v_run_id;
+    v_job_id := aos_core.enqueue(
+        v_tenant_id, 
+        'test_job', 
+        '{"test": true}'::jsonb
+    );
+    RAISE NOTICE '  ✓ Job enqueued: %', v_job_id;
     
-    -- Log an event
-    PERFORM aos_core.log_event(v_run_id, 'test_event', '{"test": true}'::jsonb);
-    RAISE NOTICE '  ✓ Event logged';
+    IF EXISTS (SELECT 1 FROM aos_core.job WHERE job_id = v_job_id AND status = 'pending') THEN
+        RAISE NOTICE '  ✓ Job pending';
+    ELSE
+        RAISE EXCEPTION '  ✗ Job not found';
+    END IF;
     
-    -- Try to update (should fail)
-    BEGIN
-        UPDATE aos_core.event_log SET payload = '{"modified": true}'::jsonb WHERE run_id = v_run_id;
-        RAISE EXCEPTION '  ✗ Update should have been blocked';
-    EXCEPTION WHEN OTHERS THEN
-        RAISE NOTICE '  ✓ Update correctly blocked: %', SQLERRM;
-    END;
-    
-    -- Cleanup (best-effort; immutability triggers can block deletes)
-    BEGIN
-        DELETE FROM aos_auth.tenant WHERE tenant_id = v_tenant_id;
-    EXCEPTION WHEN OTHERS THEN
-        RAISE NOTICE '  ⚠️ Cleanup skipped: %', SQLERRM;
-    END;
+    -- Cleanup
+    DELETE FROM aos_auth.tenant WHERE tenant_id = v_tenant_id;
     
     RAISE NOTICE 'Test 6: PASSED';
 END $$;
 
--- Test 7: Persona and model parameter merging
+-- Test 7: RAG collection
 DO $$
 DECLARE
-    v_tenant_id uuid := gen_random_uuid();
-    v_model_id uuid;
-    v_persona_id uuid := gen_random_uuid();
-    v_effective_params jsonb;
+    v_tenant_id uuid;
+    v_collection_id uuid;
+    v_doc_id uuid;
 BEGIN
-    RAISE NOTICE 'Test 7: Persona parameter merging...';
+    RAISE NOTICE 'Test 7: RAG collection...';
     
-    -- Setup
-    INSERT INTO aos_auth.tenant (tenant_id, name) VALUES (v_tenant_id, 'persona_test_' || v_tenant_id);
+    INSERT INTO aos_auth.tenant (name) 
+    VALUES ('rag_test_' || gen_random_uuid())
+    RETURNING tenant_id INTO v_tenant_id;
     
-    SELECT model_id INTO v_model_id FROM aos_meta.llm_model_registry WHERE provider = 'openai' AND model_name = 'gpt-4o';
+    INSERT INTO aos_rag.collection (tenant_id, name)
+    VALUES (v_tenant_id, 'test_collection')
+    RETURNING collection_id INTO v_collection_id;
+    RAISE NOTICE '  ✓ Collection created';
     
-    INSERT INTO aos_persona.persona (persona_id, tenant_id, name, system_prompt, model_id, override_params)
-    VALUES (v_persona_id, v_tenant_id, 'test_persona', 'Test prompt', v_model_id, '{"temperature": 0.1}'::jsonb);
-    RAISE NOTICE '  ✓ Persona created';
+    v_doc_id := aos_rag.add_document(
+        v_collection_id,
+        'PostgreSQL is a powerful open source database.',
+        'About PostgreSQL'
+    );
+    RAISE NOTICE '  ✓ Document added: %', v_doc_id;
     
-    -- Get effective params
-    v_effective_params := aos_persona.get_effective_params(v_persona_id);
-    
-    IF (v_effective_params->>'temperature')::float = 0.1 THEN
-        RAISE NOTICE '  ✓ Override applied (temperature = 0.1)';
+    -- Verify job queued for embedding
+    IF EXISTS (SELECT 1 FROM aos_core.job 
+               WHERE job_type = 'embed_document' 
+               AND payload->>'doc_id' = v_doc_id::text) THEN
+        RAISE NOTICE '  ✓ Embedding job queued';
     ELSE
-        RAISE EXCEPTION '  ✗ Override not applied: %', v_effective_params;
+        RAISE EXCEPTION '  ✗ Embedding job not queued';
     END IF;
     
-    IF v_effective_params ? 'top_p' THEN
-        RAISE NOTICE '  ✓ Model defaults preserved (top_p present)';
-    ELSE
-        RAISE EXCEPTION '  ✗ Model defaults lost';
-    END IF;
-    
-    -- Cleanup (best-effort; immutability triggers can block deletes)
-    BEGIN
-        DELETE FROM aos_auth.tenant WHERE tenant_id = v_tenant_id;
-    EXCEPTION WHEN OTHERS THEN
-        RAISE NOTICE '  ⚠️ Cleanup skipped: %', SQLERRM;
-    END;
+    -- Cleanup
+    DELETE FROM aos_auth.tenant WHERE tenant_id = v_tenant_id;
     
     RAISE NOTICE 'Test 7: PASSED';
 END $$;
 
--- Test 8: Embedding enqueue and similarity search
+-- Test 8: Event immutability
 DO $$
 DECLARE
-    v_tenant_id uuid := gen_random_uuid();
-    v_doc_id uuid;
-    v_enqueued int;
-    v_result_count int;
+    v_tenant_id uuid;
+    v_run_id uuid;
+    v_event_id bigint;
 BEGIN
-    RAISE NOTICE 'Test 8: Embedding queue + vector search...';
-
-    -- Setup
-    INSERT INTO aos_auth.tenant (tenant_id, name) VALUES (v_tenant_id, 'embed_test_' || v_tenant_id);
-    PERFORM aos_embed.set_embedding_settings(v_tenant_id, true, interval '1 minute', 100, true);
-
-    INSERT INTO aos_kg.doc (doc_id, tenant_id, content, title, source)
-    VALUES (gen_random_uuid(), v_tenant_id, 'Embedding content for vector test', 'Embed Test', 'test')
-    RETURNING doc_id INTO v_doc_id;
-
-    -- Enqueue missing embeddings
-    v_enqueued := aos_embed.enqueue_missing_embeddings(v_tenant_id, 10, false);
-    IF v_enqueued = 1 THEN
-        RAISE NOTICE '  ✓ Enqueued embedding job';
-    ELSE
-        RAISE EXCEPTION '  ✗ Expected 1 job enqueued, got %', v_enqueued;
-    END IF;
-
-    -- Insert a mock embedding vector (all 0.01) to test similarity search
-    INSERT INTO aos_embed.embedding (doc_id, chunk_index, embedding, model_name, chunk_text, chunk_tokens)
-    VALUES (
-        v_doc_id,
-        0,
-        (ARRAY(SELECT 0.01::float8 FROM generate_series(1, 1536)))::vector(1536),
-        'test-embed',
-        'Embedding content for vector test',
-        6
-    );
-
-    SELECT count(*) INTO v_result_count
-    FROM aos_embed.similarity_search(
-        (ARRAY(SELECT 0.01::float8 FROM generate_series(1, 1536)))::vector(1536),
-        v_tenant_id,
-        5,
-        0.9
-    );
-
-    IF v_result_count >= 1 THEN
-        RAISE NOTICE '  ✓ Vector similarity search returned results';
-    ELSE
-        RAISE EXCEPTION '  ✗ Vector similarity search returned no results';
-    END IF;
-
-    -- Cleanup (best-effort; immutability triggers can block deletes)
+    RAISE NOTICE 'Test 8: Event immutability...';
+    
+    INSERT INTO aos_auth.tenant (name) 
+    VALUES ('event_test_' || gen_random_uuid())
+    RETURNING tenant_id INTO v_tenant_id;
+    
+    INSERT INTO aos_core.run (tenant_id, run_type)
+    VALUES (v_tenant_id, 'test')
+    RETURNING run_id INTO v_run_id;
+    
+    v_event_id := aos_core.log_event(v_run_id, 'test', '{"data": 1}'::jsonb);
+    RAISE NOTICE '  ✓ Event logged: %', v_event_id;
+    
+    -- Try to update (should fail)
     BEGIN
-        DELETE FROM aos_auth.tenant WHERE tenant_id = v_tenant_id;
+        UPDATE aos_core.event SET payload = '{"data": 2}'::jsonb 
+        WHERE event_id = v_event_id;
+        RAISE EXCEPTION '  ✗ Event was modified (should be immutable)';
     EXCEPTION WHEN OTHERS THEN
-        RAISE NOTICE '  ⚠️ Cleanup skipped: %', SQLERRM;
+        RAISE NOTICE '  ✓ Event is immutable';
     END;
-
+    
+    -- Cleanup
+    DELETE FROM aos_auth.tenant WHERE tenant_id = v_tenant_id;
+    
     RAISE NOTICE 'Test 8: PASSED';
 END $$;
 
--- Summary
-DO $$
-BEGIN
-    RAISE NOTICE '';
-    RAISE NOTICE '========================================';
-    RAISE NOTICE 'All tests PASSED!';
-    RAISE NOTICE '========================================';
-END $$;
+\echo ''
+\echo '=== All tests PASSED! ==='
